@@ -266,8 +266,7 @@ docs/.doctrees/
 # Patch files
 *.patch
 *.diff
-scripts/*
-docs/*
+docs
 
 # ===================================
 # End of .gitignore

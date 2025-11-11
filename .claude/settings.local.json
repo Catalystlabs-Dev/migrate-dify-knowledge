@@ -5,7 +5,13 @@
       "WebFetch(domain:medium.com)",
       "WebFetch(domain:docs.dify.ai)",
       "WebFetch(domain:github.com)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(/tmp/dify_migration_class.txt)",
+      "Bash(cat:*)",
+      "Bash(/tmp/dify_migration_new.py)",
+      "Bash(for file in constants.py config.py logger_utils.py dify_client.py dify_migration.py)",
+      "Bash(done)",
+      "Bash(tree:*)"
     ],
     "deny": [],
     "ask": []
