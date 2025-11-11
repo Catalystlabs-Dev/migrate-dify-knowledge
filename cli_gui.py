@@ -81,11 +81,11 @@ def print_banner():
     # Title panel with gradient background
     title_panel = Panel(
         Text.assemble(
-            ("Knowledge Base Migration Tool ", "bold bright_white"),
-            ("v2.1", "bold bright_green"),
+            ("Dify Migration Tool ", "bold bright_white"),
+            ("v3.0", "bold bright_green"),
             "\n",
             ("🚀 ", "yellow"),
-            ("Streaming Edition", "bold bright_cyan"),
+            ("KB + Workflows Edition", "bold bright_cyan"),
             (" 🚀", "yellow"),
         ),
         border_style="bright_magenta",
@@ -134,25 +134,29 @@ def load_configuration():
                 console.print("✅ Configuration loaded from [green bold]config.json[/green bold] file")
                 return source_configs, target_config
             except FileNotFoundError:
-                console.print()
-                console.print(Panel(
-                    "[bold red]❌ No configuration found![/bold red]\n\n"
-                    "Please create configuration file:\n"
-                    "  [cyan]1. .env file (recommended)[/cyan] - see .env.example\n"
-                    "  [cyan]2. config.json[/cyan] - see config.example.json",
-                    title="Configuration Error",
-                    border_style="red"
-                ))
+                pass  # Will handle below outside spinner context
 
-                # Interactive setup
-                if questionary.confirm(
-                    "Would you like to set up configuration now?",
-                    style=custom_style
-                ).ask():
-                    return interactive_config_setup()
-                else:
-                    console.print("\n[yellow]Run[/yellow] [cyan bold]./setup.sh[/cyan bold] [yellow]for quick setup[/yellow]\n")
-                    sys.exit(1)
+    # Configuration not found - handle outside spinner context
+    console.print()
+    console.print(Panel(
+        "[bold red]❌ No configuration found![/bold red]\n\n"
+        "Please create configuration file:\n"
+        "  [cyan]1. .env file (recommended)[/cyan] - see .env.example\n"
+        "  [cyan]2. config.json[/cyan] - see config.example.json",
+        title="Configuration Error",
+        border_style="red"
+    ))
+    console.print()
+
+    # Interactive setup - now spinner is stopped
+    if questionary.confirm(
+        "Would you like to set up configuration now?",
+        style=custom_style
+    ).ask():
+        return interactive_config_setup()
+    else:
+        console.print("\n[yellow]Run[/yellow] [cyan bold]./setup.sh[/cyan bold] [yellow]for quick setup[/yellow]\n")
+        sys.exit(1)
 
 
 def interactive_config_setup():
@@ -218,9 +222,50 @@ def interactive_config_setup():
         style=custom_style
     ).ask()
 
+    # Optional: Workflow migration credentials
+    console.print()
+    enable_workflow = questionary.confirm(
+        "Enable workflow/app migration? (requires email/password)",
+        default=False,
+        style=custom_style
+    ).ask()
+
+    source_email = None
+    source_password = None
+    target_email = None
+    target_password = None
+
+    if enable_workflow:
+        console.print(f"\n[bold bright_cyan]Source Login (for workflow export)[/bold bright_cyan]")
+        source_email = questionary.text(
+            "Source Email:",
+            style=custom_style
+        ).ask()
+        source_password = questionary.password(
+            "Source Password:",
+            style=custom_style
+        ).ask()
+
+        console.print(f"\n[bold bright_green]Target Login (for workflow import)[/bold bright_green]")
+        target_email = questionary.text(
+            "Target Email:",
+            style=custom_style
+        ).ask()
+        target_password = questionary.password(
+            "Target Password:",
+            style=custom_style
+        ).ask()
+
+    # Update configs with credentials
+    for config in source_configs:
+        config.email = source_email
+        config.password = source_password
+
     target_config = DifyConfig(
         base_url=target_base_url,
-        api_key=target_api_key
+        api_key=target_api_key,
+        email=target_email,
+        password=target_password
     )
 
     # Save to .env?
@@ -249,6 +294,16 @@ SOURCE_API_KEYS={source_keys}
 # Target Dify Instance Configuration
 TARGET_BASE_URL={target_config.base_url}
 TARGET_API_KEY={target_config.api_key}
+"""
+
+    # Add workflow credentials if provided
+    if source_configs[0].email and target_config.email:
+        env_content += f"""
+# Optional: Console API Credentials for Workflow/App Migration
+SOURCE_EMAIL={source_configs[0].email}
+SOURCE_PASSWORD={source_configs[0].password}
+TARGET_EMAIL={target_config.email}
+TARGET_PASSWORD={target_config.password}
 """
 
     with open('.env', 'w') as f:
@@ -320,6 +375,23 @@ def show_sources_info(source_configs: List[DifyConfig], target_config: DifyConfi
     summary.append("1", style="bold bright_green")
     summary.append(" target", style="dim white")
     console.print(summary, justify="center")
+
+    # Show workflow migration status
+    if source_configs[0].email and target_config.email:
+        workflow_status = Text()
+        workflow_status.append("✨ ", style="bright_green")
+        workflow_status.append("Workflow Migration: ", style="bright_white")
+        workflow_status.append("ENABLED", style="bold bright_green")
+        workflow_status.append(" 🚀", style="bright_green")
+        console.print(workflow_status, justify="center")
+    else:
+        workflow_status = Text()
+        workflow_status.append("ℹ️  ", style="bright_blue")
+        workflow_status.append("Workflow Migration: ", style="bright_white")
+        workflow_status.append("Disabled", style="dim white")
+        workflow_status.append(" (knowledge bases only)", style="dim italic")
+        console.print(workflow_status, justify="center")
+
     console.print()
 
 
@@ -806,6 +878,289 @@ def import_from_backup(target_config: DifyConfig):
     console.print()
 
 
+def list_all_apps(source_configs: List[DifyConfig], target_config: DifyConfig):
+    """List all apps/workflows from sources and target with beautiful formatting"""
+    console.print()
+
+    # Header with icon
+    header = Panel(
+        Text.assemble(
+            ("📱 ", "bright_yellow"),
+            ("Workflow/App Inventory", "bold bright_white"),
+            "\n\n",
+            ("Scanning all sources and target for workflows...", "dim cyan"),
+        ),
+        border_style="bright_magenta",
+        box=box.DOUBLE,
+        padding=(1, 2),
+    )
+    console.print(header)
+    console.print()
+
+    with Progress(
+        SpinnerColumn(spinner_name="dots12", style="bright_cyan"),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True
+    ) as progress:
+        # Source apps
+        for i, config in enumerate(source_configs, 1):
+            task = progress.add_task(f"[bright_cyan]⚡ Scanning Source {i}...", total=None)
+
+            try:
+                client = DifyClient(config)
+                apps = client.get_all_apps()
+                progress.remove_task(task)
+
+                # Display source apps with enhanced styling
+                table = Table(
+                    title=f"📱 Source {i}",
+                    title_style="bold bright_cyan on black",
+                    box=box.DOUBLE_EDGE,
+                    show_header=True,
+                    header_style="bold bright_yellow on black",
+                    border_style="bright_blue",
+                    padding=(0, 1),
+                    caption=f"Total: {len(apps)} app(s)/workflow(s)",
+                    caption_style="dim cyan italic"
+                )
+
+                table.add_column("No.", style="bold bright_cyan", width=5, justify="right")
+                table.add_column("📱 App Name", style="bold bright_white", min_width=30)
+                table.add_column("🔧 Mode", justify="center", style="bright_blue", width=15)
+                table.add_column("📅 Updated", justify="left", style="bright_magenta", width=20)
+
+                for idx, app in enumerate(apps, 1):
+                    # Color alternation for rows
+                    row_style = "on black" if idx % 2 == 0 else ""
+                    table.add_row(
+                        str(idx),
+                        app.get('name', 'Unknown'),
+                        app.get('mode', 'N/A').upper(),
+                        app.get('updated_at', 'N/A')[:19].replace('T', ' '),
+                        style=row_style
+                    )
+
+                # Wrap table in panel
+                table_panel = Panel(
+                    table,
+                    border_style="cyan",
+                    box=box.ROUNDED,
+                    padding=(0, 1),
+                )
+                console.print(table_panel)
+                console.print()
+
+            except Exception as e:
+                progress.remove_task(task)
+                console.print(Panel(
+                    f"[bold red]❌ Error fetching apps from Source {i}[/bold red]\n\n"
+                    f"Error: {str(e)}",
+                    border_style="red"
+                ))
+                console.print()
+
+        # Target apps
+        task = progress.add_task(f"[bright_green]⚡ Scanning Target...", total=None)
+        try:
+            target_client = DifyClient(target_config)
+            apps = target_client.get_all_apps()
+            progress.remove_task(task)
+
+            # Display target apps
+            table = Table(
+                title="🎯 Target",
+                title_style="bold bright_green on black",
+                box=box.DOUBLE_EDGE,
+                show_header=True,
+                header_style="bold bright_yellow on black",
+                border_style="bright_green",
+                padding=(0, 1),
+                caption=f"Total: {len(apps)} app(s)/workflow(s)",
+                caption_style="dim green italic"
+            )
+
+            table.add_column("No.", style="bold bright_green", width=5, justify="right")
+            table.add_column("📱 App Name", style="bold bright_white", min_width=30)
+            table.add_column("🔧 Mode", justify="center", style="bright_blue", width=15)
+            table.add_column("📅 Updated", justify="left", style="bright_magenta", width=20)
+
+            for idx, app in enumerate(apps, 1):
+                row_style = "on black" if idx % 2 == 0 else ""
+                table.add_row(
+                    str(idx),
+                    app.get('name', 'Unknown'),
+                    app.get('mode', 'N/A').upper(),
+                    app.get('updated_at', 'N/A')[:19].replace('T', ' '),
+                    style=row_style
+                )
+
+            table_panel = Panel(
+                table,
+                border_style="green",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
+            console.print(table_panel)
+            console.print()
+
+        except Exception as e:
+            progress.remove_task(task)
+            console.print(Panel(
+                f"[bold red]❌ Error fetching apps from Target[/bold red]\n\n"
+                f"Error: {str(e)}",
+                border_style="red"
+            ))
+            console.print()
+
+
+def run_workflow_migration(source_configs: List[DifyConfig], target_config: DifyConfig):
+    """Run workflow/app migration with beautiful progress display"""
+    console.print()
+
+    # Confirmation panel
+    confirm_panel = Panel(
+        Text.assemble(
+            ("🔄 ", "bright_cyan"),
+            ("Workflow/App Migration", "bold bright_white"),
+            "\n\n",
+            ("This will migrate all workflows and apps from source(s) to target.\n", "dim white"),
+            ("Existing apps with same name will be skipped.", "dim yellow"),
+        ),
+        border_style="bright_cyan",
+        box=box.DOUBLE,
+        padding=(1, 2),
+    )
+    console.print(confirm_panel)
+    console.print()
+
+    # Ask for options
+    skip_existing = questionary.confirm(
+        "Skip apps that already exist in target?",
+        default=True,
+        style=custom_style
+    ).ask()
+
+    include_secret = questionary.confirm(
+        "Include secret environment variables?",
+        default=False,
+        style=custom_style
+    ).ask()
+
+    console.print()
+
+    # Start migration
+    migration = DifyMigration(source_configs, target_config)
+
+    try:
+        console.print(Panel(
+            "[bold bright_cyan]🚀 Starting Workflow Migration...[/bold bright_cyan]",
+            border_style="cyan"
+        ))
+        console.print()
+
+        migration.migrate_all_apps(
+            skip_existing=skip_existing,
+            include_secret=include_secret,
+            streaming=True
+        )
+
+        console.print()
+        console.print(Panel(
+            "[bold bright_green]✅ Workflow Migration Completed Successfully![/bold bright_green]",
+            border_style="green",
+            box=box.DOUBLE
+        ))
+
+    except Exception as e:
+        console.print()
+        console.print(Panel(
+            f"[bold red]❌ Migration Failed[/bold red]\n\n"
+            f"Error: {str(e)}",
+            border_style="red"
+        ))
+
+
+def run_complete_migration(source_configs: List[DifyConfig], target_config: DifyConfig):
+    """Run complete migration (knowledge bases + workflows) with beautiful progress display"""
+    console.print()
+
+    # Confirmation panel
+    confirm_panel = Panel(
+        Text.assemble(
+            ("🌟 ", "bright_yellow"),
+            ("Complete Migration", "bold bright_white"),
+            "\n\n",
+            ("This will migrate:\n", "dim white"),
+            ("  1. ", "dim cyan"), ("All Knowledge Bases (datasets)\n", "bright_cyan"),
+            ("  2. ", "dim cyan"), ("All Workflows/Apps\n", "bright_cyan"),
+            ("\n", ""),
+            ("Existing items with same name will be skipped.", "dim yellow"),
+        ),
+        border_style="bright_magenta",
+        box=box.DOUBLE,
+        padding=(1, 2),
+    )
+    console.print(confirm_panel)
+    console.print()
+
+    # Ask for options
+    skip_existing = questionary.confirm(
+        "Skip items that already exist in target?",
+        default=True,
+        style=custom_style
+    ).ask()
+
+    auto_create_kb = questionary.confirm(
+        "Auto-create knowledge bases in target?",
+        default=True,
+        style=custom_style
+    ).ask()
+
+    include_secret = questionary.confirm(
+        "Include secret environment variables in apps?",
+        default=False,
+        style=custom_style
+    ).ask()
+
+    console.print()
+
+    # Start migration
+    migration = DifyMigration(source_configs, target_config)
+
+    try:
+        console.print(Panel(
+            "[bold bright_magenta]🌟 Starting Complete Migration...[/bold bright_magenta]",
+            border_style="magenta"
+        ))
+        console.print()
+
+        migration.migrate_all_with_apps(
+            skip_existing=skip_existing,
+            auto_create_kb=auto_create_kb,
+            include_secret=include_secret,
+            streaming=True,
+            migrate_datasets=True,
+            migrate_apps=True
+        )
+
+        console.print()
+        console.print(Panel(
+            "[bold bright_green]✅ Complete Migration Finished Successfully![/bold bright_green]\n\n"
+            "✨ Knowledge Bases + Workflows migrated!",
+            border_style="green",
+            box=box.DOUBLE
+        ))
+
+    except Exception as e:
+        console.print()
+        console.print(Panel(
+            f"[bold red]❌ Migration Failed[/bold red]\n\n"
+            f"Error: {str(e)}",
+            border_style="red"
+        ))
+
+
 def main_menu():
     """Main interactive menu with beautiful design"""
     print_banner()
@@ -818,18 +1173,39 @@ def main_menu():
 
     while True:
         console.print()
+
+        # Build menu choices based on workflow migration availability
+        menu_choices = [
+            "🚀 Run Streaming Migration (Export→Import per dataset)",
+            "📋 List All Knowledge Bases",
+            "💾 Export Only (Backup)",
+            "📂 Import from Backup",
+        ]
+
+        # Add workflow options if credentials are available
+        if source_configs[0].email and target_config.email:
+            menu_choices.extend([
+                "─────────────────────────",  # Separator
+                "🔄 Migrate Workflows/Apps Only",
+                "📱 List All Workflows/Apps",
+                "🌟 Complete Migration (KB + Workflows)",
+            ])
+
+        menu_choices.extend([
+            "─────────────────────────",  # Separator
+            "🔧 Reconfigure",
+            "❌ Exit"
+        ])
+
         choice = questionary.select(
             "What would you like to do?",
-            choices=[
-                "🚀 Run Streaming Migration (Export→Import per dataset)",
-                "📋 List All Knowledge Bases",
-                "💾 Export Only (Backup)",
-                "📂 Import from Backup",
-                "🔧 Reconfigure",
-                "❌ Exit"
-            ],
+            choices=menu_choices,
             style=custom_style
         ).ask()
+
+        # Skip separators
+        if choice.startswith("───"):
+            continue
 
         if choice == "🚀 Run Streaming Migration (Export→Import per dataset)":
             run_migration(source_configs, target_config)
@@ -842,6 +1218,15 @@ def main_menu():
 
         elif choice == "📂 Import from Backup":
             import_from_backup(target_config)
+
+        elif choice == "🔄 Migrate Workflows/Apps Only":
+            run_workflow_migration(source_configs, target_config)
+
+        elif choice == "📱 List All Workflows/Apps":
+            list_all_apps(source_configs, target_config)
+
+        elif choice == "🌟 Complete Migration (KB + Workflows)":
+            run_complete_migration(source_configs, target_config)
 
         elif choice == "🔧 Reconfigure":
             source_configs, target_config = interactive_config_setup()

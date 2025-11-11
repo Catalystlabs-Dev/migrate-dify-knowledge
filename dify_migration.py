@@ -33,6 +33,8 @@ class DifyConfig:
     """Configuration for Dify instance"""
     base_url: str
     api_key: str
+    email: Optional[str] = None  # For Console API login (workflow migration)
+    password: Optional[str] = None  # For Console API login (workflow migration)
 
     def __post_init__(self):
         # Remove trailing slash from base_url if present
@@ -53,6 +55,7 @@ class DifyClient:
             'Authorization': f'Bearer {config.api_key}',
             'Content-Type': 'application/json'
         }
+        self.console_access_token = None  # For Console API (workflow operations)
 
     def _make_request(
         self,
@@ -339,6 +342,228 @@ class DifyClient:
         """
         logger.info(f"Deleting dataset {dataset_id}")
         self._make_request('DELETE', f'/v1/datasets/{dataset_id}')
+
+    # ========================================
+    # Workflow/App Operations (Console API)
+    # ========================================
+
+    def console_login(self) -> str:
+        """
+        Login to Dify Console API to get access token for workflow operations
+
+        @returns Access token for Console API
+        @throws ValueError - If email/password not configured
+        @throws requests.exceptions.RequestException - On login failure
+        """
+        if not self.config.email or not self.config.password:
+            raise ValueError("Email and password required for Console API login")
+
+        logger.info(f"Logging in to Console API with email: {self.config.email}")
+
+        # Remove /v1 from base_url if present for console API
+        console_base_url = self.config.base_url.replace('/v1', '')
+
+        try:
+            response = requests.post(
+                f"{console_base_url}/console/api/login",
+                json={
+                    'email': self.config.email,
+                    'password': self.config.password
+                },
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+            response.raise_for_status()
+
+            result = response.json()
+            access_token = result.get('data', {}).get('access_token')
+
+            if not access_token:
+                raise ValueError("No access token in login response")
+
+            self.console_access_token = access_token
+            logger.info("Successfully logged in to Console API")
+            return access_token
+
+        except requests.exceptions.RequestException as error:
+            logger.error(f"Console API login failed: {str(error)}")
+            if hasattr(error, 'response') and error.response is not None:
+                logger.error(f"Response: {error.response.text}")
+            raise
+
+    def _ensure_console_login(self) -> None:
+        """
+        Ensure we have a valid console access token
+
+        @throws ValueError - If login credentials not configured
+        """
+        if not self.console_access_token:
+            self.console_login()
+
+    def list_apps(self, page: int = 1, limit: int = 30) -> Dict:
+        """
+        List all apps/workflows using Console API
+
+        @param page - Page number for pagination
+        @param limit - Number of items per page
+        @returns Dictionary with apps list and pagination info
+        """
+        self._ensure_console_login()
+
+        logger.info(f"Fetching apps (page {page}, limit {limit})")
+
+        # Remove /v1 from base_url if present for console API
+        console_base_url = self.config.base_url.replace('/v1', '')
+
+        headers = {
+            'Authorization': f'Bearer {self.console_access_token}',
+            'Content-Type': 'application/json'
+        }
+
+        try:
+            response = requests.get(
+                f"{console_base_url}/console/api/apps",
+                params={'page': page, 'limit': limit},
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.RequestException as error:
+            logger.error(f"Failed to list apps: {str(error)}")
+            if hasattr(error, 'response') and error.response is not None:
+                logger.error(f"Response: {error.response.text}")
+            raise
+
+    def get_all_apps(self) -> List[Dict]:
+        """
+        Get all apps/workflows across all pages
+
+        @returns List of all app objects
+        """
+        all_apps = []
+        page = 1
+        limit = 30
+
+        while True:
+            response = self.list_apps(page=page, limit=limit)
+            apps = response.get('data', [])
+            all_apps.extend(apps)
+
+            if not response.get('has_more', False):
+                break
+            page += 1
+
+        logger.info(f"Retrieved {len(all_apps)} apps in total")
+        return all_apps
+
+    def export_app_dsl(self, app_id: str, include_secret: bool = False) -> str:
+        """
+        Export app/workflow as DSL (YAML format)
+
+        @param app_id - ID of the app to export
+        @param include_secret - Include secret environment variables
+        @returns YAML string of app DSL
+        """
+        self._ensure_console_login()
+
+        logger.info(f"Exporting app {app_id} DSL (include_secret={include_secret})")
+
+        # Remove /v1 from base_url if present for console API
+        console_base_url = self.config.base_url.replace('/v1', '')
+
+        headers = {
+            'Authorization': f'Bearer {self.console_access_token}',
+        }
+
+        try:
+            response = requests.get(
+                f"{console_base_url}/console/api/apps/{app_id}/export",
+                params={'include_secret': str(include_secret).lower()},
+                headers=headers,
+                timeout=30
+            )
+            response.raise_for_status()
+
+            # Response is YAML text
+            dsl_content = response.text
+            logger.info(f"Successfully exported app {app_id} DSL ({len(dsl_content)} bytes)")
+            return dsl_content
+
+        except requests.exceptions.RequestException as error:
+            logger.error(f"Failed to export app {app_id}: {str(error)}")
+            if hasattr(error, 'response') and error.response is not None:
+                logger.error(f"Response: {error.response.text}")
+            raise
+
+    def import_app_dsl(
+        self,
+        yaml_content: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        icon_type: Optional[str] = None,
+        icon: Optional[str] = None,
+        icon_background: Optional[str] = None
+    ) -> Dict:
+        """
+        Import app/workflow from DSL (YAML format)
+
+        @param yaml_content - YAML string of app DSL
+        @param name - Override app name (optional)
+        @param description - Override app description (optional)
+        @param icon_type - Override icon type (optional)
+        @param icon - Override icon (optional)
+        @param icon_background - Override icon background (optional)
+        @returns Import result with app info
+        """
+        self._ensure_console_login()
+
+        logger.info(f"Importing app from DSL ({len(yaml_content)} bytes)")
+
+        # Remove /v1 from base_url if present for console API
+        console_base_url = self.config.base_url.replace('/v1', '')
+
+        headers = {
+            'Authorization': f'Bearer {self.console_access_token}',
+            'Content-Type': 'application/json'
+        }
+
+        data = {
+            'mode': 'yaml-content',
+            'yaml_content': yaml_content
+        }
+
+        # Add optional overrides
+        if name:
+            data['name'] = name
+        if description:
+            data['description'] = description
+        if icon_type:
+            data['icon_type'] = icon_type
+        if icon:
+            data['icon'] = icon
+        if icon_background:
+            data['icon_background'] = icon_background
+
+        try:
+            response = requests.post(
+                f"{console_base_url}/console/api/apps/imports",
+                json=data,
+                headers=headers,
+                timeout=60  # Longer timeout for import
+            )
+            response.raise_for_status()
+
+            result = response.json()
+            logger.info(f"Successfully imported app: {result.get('data', {}).get('app', {}).get('name')}")
+            return result
+
+        except requests.exceptions.RequestException as error:
+            logger.error(f"Failed to import app: {str(error)}")
+            if hasattr(error, 'response') and error.response is not None:
+                logger.error(f"Response: {error.response.text}")
+            raise
 
 
 class DifyMigration:
@@ -660,11 +885,317 @@ class DifyMigration:
         logger.info(f"Failed: {failed_count}")
         logger.info(f"{'='*60}\n")
 
+    # ========================================
+    # Workflow/App Migration Methods
+    # ========================================
+
+    def export_app(self, app_id: str, source_client: DifyClient, include_secret: bool = False) -> Dict:
+        """
+        Export a single app/workflow with its DSL
+
+        @param app_id - ID of the app to export
+        @param source_client - DifyClient instance to use for export
+        @param include_secret - Include secret environment variables
+        @returns Dictionary containing app metadata and DSL content
+        """
+        logger.info(f"Exporting app {app_id}")
+
+        # Get app info
+        all_apps = source_client.get_all_apps()
+        app = next((a for a in all_apps if a['id'] == app_id), None)
+
+        if not app:
+            raise ValueError(f"App {app_id} not found")
+
+        # Export DSL
+        dsl_content = source_client.export_app_dsl(app_id, include_secret=include_secret)
+
+        export_data = {
+            'app': app,
+            'dsl_content': dsl_content
+        }
+
+        # Save to file
+        export_file = self.export_dir / f"app_{app_id}.yml"
+        with open(export_file, 'w', encoding='utf-8') as file:
+            file.write(dsl_content)
+
+        logger.info(f"App exported to {export_file}")
+        return export_data
+
+    def export_all_apps(self, include_secret: bool = False) -> List[Dict]:
+        """
+        Export all apps/workflows from all source instances
+
+        @param include_secret - Include secret environment variables
+        @returns List of exported app data from all sources
+        """
+        logger.info("Exporting all apps from all sources")
+        all_exported_apps = []
+
+        for index, source_client in enumerate(self.source_clients, 1):
+            logger.info(f"Processing source {index}/{len(self.source_clients)}")
+
+            try:
+                all_apps = source_client.get_all_apps()
+                logger.info(f"Found {len(all_apps)} apps in source {index}")
+
+                for app in all_apps:
+                    try:
+                        data = self.export_app(app['id'], source_client, include_secret=include_secret)
+                        all_exported_apps.append(data)
+                    except Exception as error:
+                        logger.error(f"Failed to export app {app['id']} from source {index}: {str(error)}")
+
+            except Exception as error:
+                logger.error(f"Failed to access source {index}: {str(error)}")
+
+        logger.info(f"Exported {len(all_exported_apps)} apps in total from all sources")
+        return all_exported_apps
+
+    def import_app(self, export_data: Dict, skip_existing: bool = True) -> Optional[str]:
+        """
+        Import an app/workflow to target instance
+
+        @param export_data - Exported app data with DSL content
+        @param skip_existing - Skip if app with same name exists
+        @returns ID of imported app or None if skipped
+        """
+        app_info = export_data['app']
+        app_name = app_info['name']
+        dsl_content = export_data['dsl_content']
+
+        logger.info(f"Importing app: {app_name}")
+
+        # Check if app already exists
+        existing_apps = self.target_client.get_all_apps()
+        existing_app = next((a for a in existing_apps if a['name'] == app_name), None)
+
+        if existing_app:
+            if skip_existing:
+                logger.warning(f"App '{app_name}' already exists, skipping")
+                return None
+            else:
+                logger.warning(f"App '{app_name}' already exists, will create duplicate")
+
+        try:
+            # Import app
+            result = self.target_client.import_app_dsl(
+                yaml_content=dsl_content,
+                name=None,  # Use name from DSL
+                description=None  # Use description from DSL
+            )
+
+            imported_app = result.get('data', {}).get('app', {})
+            app_id = imported_app.get('id')
+
+            logger.info(f"App '{app_name}' imported successfully with ID: {app_id}")
+            return app_id
+
+        except Exception as error:
+            logger.error(f"Failed to import app '{app_name}': {str(error)}")
+            raise
+
+    def import_app_from_file(self, dsl_file_path: str, skip_existing: bool = True) -> Optional[str]:
+        """
+        Import app from exported DSL file
+
+        @param dsl_file_path - Path to DSL YAML file
+        @param skip_existing - Skip if app already exists
+        @returns ID of imported app or None if skipped
+        """
+        logger.info(f"Importing app from file: {dsl_file_path}")
+
+        with open(dsl_file_path, 'r', encoding='utf-8') as file:
+            dsl_content = file.read()
+
+        # Parse YAML to get app name (for duplicate check)
+        import yaml
+        try:
+            dsl_data = yaml.safe_load(dsl_content)
+            app_name = dsl_data.get('name', 'Unknown')
+        except Exception:
+            app_name = 'Unknown'
+
+        export_data = {
+            'app': {'name': app_name},
+            'dsl_content': dsl_content
+        }
+
+        return self.import_app(export_data, skip_existing)
+
+    def migrate_all_apps(self, skip_existing: bool = True, include_secret: bool = False, streaming: bool = True) -> None:
+        """
+        Complete app/workflow migration: export from all sources and import to target
+
+        @param skip_existing - Skip apps that already exist in target
+        @param include_secret - Include secret environment variables in export
+        @param streaming - Stream migration (export->import per app) instead of batch (default: True)
+        """
+        logger.info("Starting full app/workflow migration from all sources")
+        logger.info(f"Mode: {'Streaming' if streaming else 'Batch'} migration")
+
+        if streaming:
+            self._migrate_apps_streaming(skip_existing, include_secret)
+        else:
+            self._migrate_apps_batch(skip_existing, include_secret)
+
+    def _migrate_apps_streaming(self, skip_existing: bool, include_secret: bool) -> None:
+        """
+        Streaming migration for apps: export->import one app at a time
+        """
+        success_count = 0
+        skipped_count = 0
+        failed_count = 0
+        total_count = 0
+
+        # Get existing apps in target
+        try:
+            existing_apps = self.target_client.get_all_apps()
+            existing_names = {app['name'] for app in existing_apps}
+            logger.info(f"Found {len(existing_names)} existing apps in target")
+        except Exception as e:
+            logger.warning(f"Could not fetch existing apps: {e}")
+            existing_names = set()
+
+        # Process each source
+        for source_idx, source_client in enumerate(self.source_clients, 1):
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Processing Source {source_idx}/{len(self.source_clients)}")
+            logger.info(f"{'='*60}")
+
+            try:
+                all_apps = source_client.get_all_apps()
+                logger.info(f"Found {len(all_apps)} apps in source {source_idx}")
+
+                # Process each app immediately
+                for app in all_apps:
+                    total_count += 1
+                    app_name = app['name']
+
+                    logger.info(f"\n[{total_count}] Processing: {app_name}")
+
+                    # Check if already exists
+                    if skip_existing and app_name in existing_names:
+                        logger.info(f"  ⏭️  Already exists in target, skipping")
+                        skipped_count += 1
+                        continue
+
+                    try:
+                        # Export this app
+                        logger.info(f"  📤 Exporting...")
+                        export_data = self.export_app(app['id'], source_client, include_secret=include_secret)
+
+                        # Import immediately
+                        logger.info(f"  📥 Importing...")
+                        result = self.import_app(export_data, skip_existing=False)
+
+                        if result:
+                            logger.info(f"  ✅ Success!")
+                            success_count += 1
+                            existing_names.add(app_name)
+                        else:
+                            logger.warning(f"  ⏭️  Skipped (already exists)")
+                            skipped_count += 1
+
+                    except Exception as error:
+                        logger.error(f"  ❌ Failed: {str(error)}")
+                        failed_count += 1
+
+            except Exception as error:
+                logger.error(f"Failed to access source {source_idx}: {str(error)}")
+
+        # Print summary
+        logger.info(f"\n{'='*60}")
+        logger.info("Streaming App Migration Completed!")
+        logger.info(f"Total apps processed: {total_count}")
+        logger.info(f"Successfully imported: {success_count}")
+        logger.info(f"Skipped (already exists): {skipped_count}")
+        logger.info(f"Failed: {failed_count}")
+        logger.info(f"{'='*60}\n")
+
+    def _migrate_apps_batch(self, skip_existing: bool, include_secret: bool) -> None:
+        """
+        Batch migration for apps: export all first, then import all
+        """
+        # Export all apps from all sources
+        exported_apps = self.export_all_apps(include_secret=include_secret)
+
+        logger.info(f"Starting import of {len(exported_apps)} apps to target")
+
+        # Import to target with statistics
+        success_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        for app_data in exported_apps:
+            app_name = app_data['app'].get('name', 'unknown')
+            try:
+                result = self.import_app(app_data, skip_existing)
+                if result is None:
+                    skipped_count += 1
+                else:
+                    success_count += 1
+            except Exception as error:
+                logger.error(f"Failed to import app '{app_name}': {str(error)}")
+                failed_count += 1
+
+        # Print summary
+        logger.info(f"\n{'='*60}")
+        logger.info("Batch App Migration Completed!")
+        logger.info(f"Total apps processed: {len(exported_apps)}")
+        logger.info(f"Successfully imported: {success_count}")
+        logger.info(f"Skipped (already exists): {skipped_count}")
+        logger.info(f"Failed: {failed_count}")
+        logger.info(f"{'='*60}\n")
+
+    def migrate_all_with_apps(
+        self,
+        skip_existing: bool = True,
+        auto_create_kb: bool = True,
+        include_secret: bool = False,
+        streaming: bool = True,
+        migrate_datasets: bool = True,
+        migrate_apps: bool = True
+    ) -> None:
+        """
+        Complete migration: knowledge bases AND apps/workflows
+
+        @param skip_existing - Skip items that already exist in target
+        @param auto_create_kb - Automatically create knowledge bases in target
+        @param include_secret - Include secret environment variables in app export
+        @param streaming - Stream migration (export->import per item) instead of batch
+        @param migrate_datasets - Migrate knowledge bases (default: True)
+        @param migrate_apps - Migrate apps/workflows (default: True)
+        """
+        logger.info("="*80)
+        logger.info("COMPLETE MIGRATION: Knowledge Bases + Apps/Workflows")
+        logger.info("="*80)
+
+        if migrate_datasets:
+            logger.info("\n>>> PHASE 1: Migrating Knowledge Bases <<<\n")
+            try:
+                self.migrate_all(skip_existing=skip_existing, auto_create=auto_create_kb, streaming=streaming)
+            except Exception as error:
+                logger.error(f"Knowledge base migration failed: {str(error)}")
+
+        if migrate_apps:
+            logger.info("\n>>> PHASE 2: Migrating Apps/Workflows <<<\n")
+            try:
+                self.migrate_all_apps(skip_existing=skip_existing, include_secret=include_secret, streaming=streaming)
+            except Exception as error:
+                logger.error(f"App migration failed: {str(error)}")
+
+        logger.info("\n" + "="*80)
+        logger.info("COMPLETE MIGRATION FINISHED!")
+        logger.info("="*80)
+
 
 def load_config_from_env() -> tuple[List[DifyConfig], DifyConfig]:
     """
     Load configuration from .env file
     Supports multiple source API keys separated by comma
+    Supports optional email/password for Console API (workflow migration)
 
     @returns Tuple of (list_of_source_configs, target_config)
     @throws ValueError - If required environment variables are missing
@@ -675,6 +1206,12 @@ def load_config_from_env() -> tuple[List[DifyConfig], DifyConfig]:
     source_api_keys_raw = os.getenv('SOURCE_API_KEYS')  # Support multiple keys
     target_base_url = os.getenv('TARGET_BASE_URL')
     target_api_key = os.getenv('TARGET_API_KEY')
+
+    # Optional: Console API credentials for workflow migration
+    source_email = os.getenv('SOURCE_EMAIL')
+    source_password = os.getenv('SOURCE_PASSWORD')
+    target_email = os.getenv('TARGET_EMAIL')
+    target_password = os.getenv('TARGET_PASSWORD')
 
     # Fallback to single key for backwards compatibility
     if not source_api_keys_raw:
@@ -704,15 +1241,21 @@ def load_config_from_env() -> tuple[List[DifyConfig], DifyConfig]:
     for api_key in source_api_keys:
         source_configs.append(DifyConfig(
             base_url=source_base_url,
-            api_key=api_key
+            api_key=api_key,
+            email=source_email,
+            password=source_password
         ))
 
     target_config = DifyConfig(
         base_url=target_base_url,
-        api_key=target_api_key
+        api_key=target_api_key,
+        email=target_email,
+        password=target_password
     )
 
     logger.info(f"Loaded configuration: {len(source_configs)} source(s), 1 target")
+    if source_email and target_email:
+        logger.info("Console API credentials loaded (workflow migration enabled)")
     return source_configs, target_config
 
 

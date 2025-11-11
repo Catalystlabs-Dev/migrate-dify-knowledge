@@ -1,24 +1,29 @@
-# Dify Knowledge Base Migration Tool
+# Dify Migration Tool
 
-Tool Python untuk migrasi knowledge bases (datasets) dari satu instance Dify ke instance Dify lainnya, termasuk semua documents, chunks/segments, dan metadata.
+Tool Python untuk migrasi **knowledge bases** dan **workflows/apps** dari satu instance Dify ke instance Dify lainnya, termasuk semua documents, chunks/segments, metadata, dan DSL workflows.
 
 ## Overview
 
 Tool ini memungkinkan Anda untuk:
 - Export knowledge bases dari Dify source instance
 - Import knowledge bases ke Dify target instance
-- Migrasi complete dari satu atau **multiple sources** ke target
-- Backup knowledge bases ke file JSON
+- **Export dan import workflows/apps (DSL)**
+- **Complete migration (KB + Workflows)**
+- Migrasi dari satu atau **multiple sources** ke target
+- Backup knowledge bases dan workflows ke file
 
 ## Features
 
 ### Core Features
 - ✅ **Multiple source support** - Migrate dari multiple Dify API keys sekaligus
+- ✅ **Workflow/App migration** - Migrate DSL workflows dan apps
+- ✅ **Complete migration** - Migrate KB + Workflows dalam satu operasi
 - ✅ **Auto-create knowledge bases** - Otomatis create knowledge base di target
 - ✅ Export single atau multiple knowledge bases
-- ✅ Import dari file JSON atau langsung dari source
+- ✅ Import dari file JSON/YAML atau langsung dari source
 - ✅ Preserve document structure dan segments
-- ✅ Skip datasets yang sudah ada (configurable)
+- ✅ Preserve workflow configurations dan dependencies
+- ✅ Skip items yang sudah ada (configurable)
 - ✅ Logging lengkap untuk tracking progress
 - ✅ Error handling yang robust
 - ✅ Support untuk pagination pada large datasets
@@ -71,21 +76,27 @@ nano .env
 
 ### .env File (Recommended)
 
-**Single Source:**
+**Knowledge Bases Only:**
 ```bash
 SOURCE_BASE_URL=https://api.dify.ai
-SOURCE_API_KEY=dataset-xxxxx
+SOURCE_API_KEYS=dataset-key1,dataset-key2
 TARGET_BASE_URL=https://api.dify.ai
 TARGET_API_KEY=dataset-yyyyy
 ```
 
-**Multiple Sources:**
+**With Workflow Migration:**
 ```bash
-# Comma-separated API keys
+# Knowledge Base API Keys
 SOURCE_BASE_URL=https://api.dify.ai
-SOURCE_API_KEYS=dataset-key1,dataset-key2,dataset-key3
+SOURCE_API_KEYS=dataset-key1,dataset-key2
 TARGET_BASE_URL=https://api.dify.ai
 TARGET_API_KEY=dataset-yyyyy
+
+# Console API Credentials (for workflow migration)
+SOURCE_EMAIL=your-source-email@example.com
+SOURCE_PASSWORD=your-source-password
+TARGET_EMAIL=your-target-email@example.com
+TARGET_PASSWORD=your-target-password
 ```
 
 ### Getting API Keys
@@ -222,17 +233,62 @@ Select: `💾 Export Only (Backup)`
 
 Exports all datasets to `export_data/` folder as JSON files.
 
-### Example 5: Command Line (for Scripts)
+### Example 5: List All Workflows/Apps
+
+```bash
+python scripts/list_apps.py
+```
+
+Shows all workflows and apps from source(s) and target with:
+- App names
+- Modes (workflow, chatbot, agent, etc.)
+- Last updated timestamps
+
+### Example 6: Migrate Workflows Only
+
+```bash
+python scripts/migrate_apps.py
+```
+
+Interactive prompts will ask:
+- Skip existing apps?
+- Include secret variables?
+- Use streaming mode?
+
+### Example 7: Complete Migration (KB + Workflows)
+
+```bash
+python cli_gui.py
+```
+
+Select: `🌟 Complete Migration (KB + Workflows)`
+
+Or via command line:
+```bash
+python scripts/complete_migration.py
+```
+
+This migrates EVERYTHING:
+1. All knowledge bases with documents
+2. All workflows/apps with configurations
+
+### Example 8: Command Line (for Scripts)
 
 ```bash
 # Full migration (non-interactive)
-python dify_migration.py
+python dify_migration.py                 # KB only
 
-# Just list datasets
-python scripts/list_datasets.py
+# Workflow migration
+python scripts/migrate_apps.py           # Workflows only
+python scripts/complete_migration.py     # KB + Workflows
 
-# Export only
-python scripts/export_only.py
+# List operations
+python scripts/list_datasets.py          # List KB
+python scripts/list_apps.py              # List workflows
+
+# Export operations
+python scripts/export_only.py            # Export KB
+python scripts/export_apps.py            # Export workflows
 ```
 
 ## Multiple Sources
@@ -330,6 +386,7 @@ nano .env
 - **v1.0** - Basic migration, single source
 - **v2.0** - Multiple sources, auto-create KB
 - **v2.1** - Interactive CLI GUI 🎨
+- **v3.0** - Workflow/App migration 🔄
 
 ## License
 
@@ -352,13 +409,18 @@ cp .env.example .env                 # Manual setup
 
 # Main tools
 python cli_gui.py                    # Interactive CLI (recommended)
-python dify_migration.py             # Command line migration
+python dify_migration.py             # Command line migration (KB only)
 
-# Helper scripts
+# Knowledge Base scripts
 python scripts/list_datasets.py      # List all datasets
-python scripts/export_only.py        # Export/backup
-python scripts/import_from_backup.py # Import from files
-python scripts/demo.py               # See demo
+python scripts/export_only.py        # Export/backup KB
+python scripts/import_from_backup.py # Import KB from files
+
+# Workflow/App scripts
+python scripts/list_apps.py          # List all workflows/apps
+python scripts/export_apps.py        # Export/backup workflows
+python scripts/migrate_apps.py       # Migrate workflows only
+python scripts/complete_migration.py # Migrate KB + Workflows
 
 # Logs
 tail -f dify_migration.log           # Monitor logs
@@ -366,7 +428,27 @@ tail -f dify_migration.log           # Monitor logs
 
 ---
 
-**Version:** 2.1.0
+**Version:** 3.0.0
 **Updated:** 2025-11-10
 **Author:** Dify Migration Tool Team
 **Repository:** migrate-dify-knowledge
+
+## What's New in v3.0
+
+### 🎉 Workflow/App Migration Support
+- **Export/Import DSL workflows** - Migrate complete workflow configurations
+- **Console API integration** - Authenticate with email/password for workflow operations
+- **Preserve dependencies** - Maintain tool configurations and connections
+- **Secret handling** - Optional inclusion of environment variables
+
+### ✨ Enhanced CLI GUI
+- **Workflow menu options** - New interactive menus for workflow operations
+- **Complete migration** - Single-click KB + Workflow migration
+- **Status indicators** - Visual feedback for workflow migration availability
+- **Smart menus** - Context-aware options based on credentials
+
+### 📜 New Scripts
+- `scripts/list_apps.py` - List all workflows and apps
+- `scripts/export_apps.py` - Export workflows to YAML files
+- `scripts/migrate_apps.py` - Migrate workflows only
+- `scripts/complete_migration.py` - Complete KB + Workflow migration
