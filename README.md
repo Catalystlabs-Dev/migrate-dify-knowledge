@@ -18,6 +18,7 @@ Tool ini memungkinkan Anda untuk:
 - ✅ **Multiple source support** - Migrate dari multiple Dify API keys sekaligus
 - ✅ **Workflow/App migration** - Migrate DSL workflows dan apps
 - ✅ **Complete migration** - Migrate KB + Workflows dalam satu operasi
+- ✅ **Parallel execution** - KB dan Workflows migrate bersamaan (2x faster!)
 - ✅ **Auto-create knowledge bases** - Otomatis create knowledge base di target
 - ✅ Export single atau multiple knowledge bases
 - ✅ Import dari file JSON/YAML atau langsung dari source
@@ -272,6 +273,8 @@ This migrates EVERYTHING:
 1. All knowledge bases with documents
 2. All workflows/apps with configurations
 
+**By default runs in PARALLEL mode** - KB and Workflows migrate simultaneously for maximum speed! 🚀
+
 ### Example 8: Command Line (for Scripts)
 
 ```bash
@@ -441,9 +444,16 @@ tail -f dify_migration.log           # Monitor logs
 - **Preserve dependencies** - Maintain tool configurations and connections
 - **Secret handling** - Optional inclusion of environment variables
 
+### ⚡ Parallel Execution
+- **PARALLEL mode by default** - KB and Workflows migrate simultaneously
+- **2x faster** - Both migrations run in separate threads
+- **Configurable** - Choose between parallel or sequential mode
+- **Error isolation** - Individual error handling for each thread
+
 ### ✨ Enhanced CLI GUI
 - **Workflow menu options** - New interactive menus for workflow operations
 - **Complete migration** - Single-click KB + Workflow migration
+- **Parallel execution toggle** - Choose parallel vs sequential
 - **Status indicators** - Visual feedback for workflow migration availability
 - **Smart menus** - Context-aware options based on credentials
 

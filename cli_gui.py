@@ -1123,6 +1123,12 @@ def run_complete_migration(source_configs: List[DifyConfig], target_config: Dify
         style=custom_style
     ).ask()
 
+    parallel = questionary.confirm(
+        "Run KB and Workflow migrations in PARALLEL? (faster)",
+        default=True,
+        style=custom_style
+    ).ask()
+
     console.print()
 
     # Start migration
@@ -1141,7 +1147,8 @@ def run_complete_migration(source_configs: List[DifyConfig], target_config: Dify
             include_secret=include_secret,
             streaming=True,
             migrate_datasets=True,
-            migrate_apps=True
+            migrate_apps=True,
+            parallel=parallel
         )
 
         console.print()

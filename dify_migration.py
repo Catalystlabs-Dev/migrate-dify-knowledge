@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from pathlib import Path
 import time
+import threading
 from dotenv import load_dotenv
 
 
@@ -1156,7 +1157,8 @@ class DifyMigration:
         include_secret: bool = False,
         streaming: bool = True,
         migrate_datasets: bool = True,
-        migrate_apps: bool = True
+        migrate_apps: bool = True,
+        parallel: bool = True
     ) -> None:
         """
         Complete migration: knowledge bases AND apps/workflows
@@ -1167,28 +1169,84 @@ class DifyMigration:
         @param streaming - Stream migration (export->import per item) instead of batch
         @param migrate_datasets - Migrate knowledge bases (default: True)
         @param migrate_apps - Migrate apps/workflows (default: True)
+        @param parallel - Run KB and Workflow migrations in parallel (default: True)
         """
         logger.info("="*80)
         logger.info("COMPLETE MIGRATION: Knowledge Bases + Apps/Workflows")
+        logger.info(f"Execution Mode: {'PARALLEL' if parallel else 'SEQUENTIAL'}")
         logger.info("="*80)
 
-        if migrate_datasets:
-            logger.info("\n>>> PHASE 1: Migrating Knowledge Bases <<<\n")
-            try:
-                self.migrate_all(skip_existing=skip_existing, auto_create=auto_create_kb, streaming=streaming)
-            except Exception as error:
-                logger.error(f"Knowledge base migration failed: {str(error)}")
+        if parallel and migrate_datasets and migrate_apps:
+            # Parallel execution - both migrations run simultaneously
+            logger.info("\n🚀 Starting PARALLEL migration (KB + Workflows running together)...\n")
 
-        if migrate_apps:
-            logger.info("\n>>> PHASE 2: Migrating Apps/Workflows <<<\n")
-            try:
-                self.migrate_all_apps(skip_existing=skip_existing, include_secret=include_secret, streaming=streaming)
-            except Exception as error:
-                logger.error(f"App migration failed: {str(error)}")
+            kb_error = None
+            workflow_error = None
 
-        logger.info("\n" + "="*80)
-        logger.info("COMPLETE MIGRATION FINISHED!")
-        logger.info("="*80)
+            def run_kb_migration():
+                nonlocal kb_error
+                try:
+                    logger.info(">>> THREAD 1: Migrating Knowledge Bases <<<")
+                    self.migrate_all(skip_existing=skip_existing, auto_create=auto_create_kb, streaming=streaming)
+                except Exception as error:
+                    kb_error = error
+                    logger.error(f"Knowledge base migration failed: {str(error)}")
+
+            def run_workflow_migration():
+                nonlocal workflow_error
+                try:
+                    logger.info(">>> THREAD 2: Migrating Apps/Workflows <<<")
+                    self.migrate_all_apps(skip_existing=skip_existing, include_secret=include_secret, streaming=streaming)
+                except Exception as error:
+                    workflow_error = error
+                    logger.error(f"App migration failed: {str(error)}")
+
+            # Create and start threads
+            kb_thread = threading.Thread(target=run_kb_migration, name="KB-Migration")
+            workflow_thread = threading.Thread(target=run_workflow_migration, name="Workflow-Migration")
+
+            kb_thread.start()
+            workflow_thread.start()
+
+            # Wait for both to complete
+            kb_thread.join()
+            workflow_thread.join()
+
+            # Report results
+            logger.info("\n" + "="*80)
+            logger.info("PARALLEL MIGRATION RESULTS:")
+            if kb_error:
+                logger.error(f"  ❌ Knowledge Bases: FAILED - {str(kb_error)}")
+            else:
+                logger.info("  ✅ Knowledge Bases: SUCCESS")
+
+            if workflow_error:
+                logger.error(f"  ❌ Workflows/Apps: FAILED - {str(workflow_error)}")
+            else:
+                logger.info("  ✅ Workflows/Apps: SUCCESS")
+            logger.info("="*80)
+
+        else:
+            # Sequential execution - original behavior
+            logger.info("\n🔄 Starting SEQUENTIAL migration...\n")
+
+            if migrate_datasets:
+                logger.info("\n>>> PHASE 1: Migrating Knowledge Bases <<<\n")
+                try:
+                    self.migrate_all(skip_existing=skip_existing, auto_create=auto_create_kb, streaming=streaming)
+                except Exception as error:
+                    logger.error(f"Knowledge base migration failed: {str(error)}")
+
+            if migrate_apps:
+                logger.info("\n>>> PHASE 2: Migrating Apps/Workflows <<<\n")
+                try:
+                    self.migrate_all_apps(skip_existing=skip_existing, include_secret=include_secret, streaming=streaming)
+                except Exception as error:
+                    logger.error(f"App migration failed: {str(error)}")
+
+            logger.info("\n" + "="*80)
+            logger.info("SEQUENTIAL MIGRATION FINISHED!")
+            logger.info("="*80)
 
 
 def load_config_from_env() -> tuple[List[DifyConfig], DifyConfig]:
